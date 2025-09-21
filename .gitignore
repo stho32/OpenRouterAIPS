@@ -1,0 +1,48 @@
+# PowerShell Module Development
+*.tmp
+*.temp
+*.bak
+*~
+.DS_Store
+Thumbs.db
+
+# Test artifacts and temporary files
+test.json
+test2.json
+*.test.*
+temp*
+
+# Claude Code local settings
+.claude/
+.claude-logs/
+
+# Windows
+desktop.ini
+*.lnk
+
+# PowerShell
+*.ps1xml.bak
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Development artifacts
+dev/
+scratch/
+experimental/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

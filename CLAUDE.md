@@ -16,7 +16,6 @@ OpenRouterAIPS is a PowerShell module that provides command-line access to AI mo
 # Test specific functionality
 .\Examples\BasicUsage.ps1
 .\Examples\TestAutoCompletion.ps1
-.\Examples\TestEncoding.ps1
 ```
 
 ### Module Development
@@ -55,7 +54,6 @@ The module exports these primary cmdlets:
 ### Private Helper Functions
 - `Get-OpenRouterApiKey` - Retrieves API key from environment
 - `New-OpenRouterHeaders` - Creates HTTP headers for API requests
-- `ConvertTo-TerminalEncoding` - Handles UTF-8 text encoding for terminals
 - `Invoke-OpenRouterApiRequest` - Makes HTTP requests with error handling
 
 ### Configuration System
@@ -82,7 +80,7 @@ Functions accept pipeline input where appropriate, particularly `Invoke-OpenRout
 All public functions use proper PowerShell parameter attributes like `[Parameter()]`, `[ValidateNotNullOrEmpty()]`, and support for tab completion.
 
 ### Encoding Handling
-The module includes UTF-8 encoding support for international characters, converting text appropriately for the current terminal encoding.
+The module handles UTF-8 text encoding automatically for international characters in API responses.
 
 ### Object Output
 Functions return structured PSCustomObject instances with consistent properties, enabling PowerShell's object pipeline features.
