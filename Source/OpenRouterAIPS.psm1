@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 
 <#
 .SYNOPSIS
@@ -21,13 +21,6 @@ $script:DefaultModel = 'openai/gpt-3.5-turbo'
 $script:DefaultMaxTokens = 1000
 $script:DefaultTemperature = 0.7
 
-# Set UTF-8 encoding for proper character display
-try {
-    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-    $OutputEncoding = [System.Text.Encoding]::UTF8
-} catch {
-    Write-Verbose "Could not set UTF-8 encoding: $($_.Exception.Message)"
-}
 
 # Private helper functions
 
@@ -65,46 +58,6 @@ function New-OpenRouterHeaders {
     }
 }
 
-function Repair-EncodingIssues {
-    <#
-    .SYNOPSIS
-        Fixes common UTF-8 encoding issues in text
-    #>
-    [CmdletBinding()]
-    param(
-        [string]$Text
-    )
-    
-    if (-not $Text) { return $Text }
-    
-    # Fix the most common German umlaut encoding issues
-    $result = $Text
-    
-    # Standard fixes for common encoding problems
-    $result = $result -replace 'Ã¤', 'ä'   # ä
-    $result = $result -replace 'Ã¶', 'ö'   # ö  
-    $result = $result -replace 'Ã¼', 'ü'   # ü
-    $result = $result -replace 'ÃŸ', 'ß'   # ß
-    $result = $result -replace 'Ã„', 'Ä'   # Ä
-    $result = $result -replace 'Ã–', 'Ö'   # Ö
-    $result = $result -replace 'Ãœ', 'Ü'   # Ü
-    
-    # Multi-level encoding issues (e.g., ÃƒÂ¤ -> ä)
-    $result = $result -replace 'Ã\u0083\u00a4', 'ä'
-    $result = $result -replace 'Ã\u0083\u00b6', 'ö' 
-    $result = $result -replace 'Ã\u0083\u00bc', 'ü'
-    $result = $result -replace 'Ã\u0083\u009f', 'ß'
-    
-    # Alternative patterns
-    $result = $result -replace 'mÃ¶', 'mö'    # möchten pattern
-    $result = $result -replace 'schÃ¶', 'schö' # schön pattern
-    $result = $result -replace 'sÃ¼', 'sü'    # süß pattern
-    
-    # Handle any remaining 'Ã' before vowels (common mistake)
-    $result = $result -replace 'Ã([aeiou])', 'Ä$1'  # Fallback for remaining issues
-    
-    return $result
-}
 
 function Invoke-OpenRouterApiRequest {
     <#
@@ -141,6 +94,9 @@ function Invoke-OpenRouterApiRequest {
         }
         
         $response = Invoke-RestMethod @params
+
+        $response | ConvertTo-Json -Depth 10 | Set-Content test2.json
+
         return $response
     }
     catch {
@@ -380,12 +336,6 @@ function Invoke-OpenRouterChat {
             Write-Verbose "Model: $($response.model)"
             Write-Verbose "Choices count: $($response.choices.Count)"
             
-            # Apply encoding fix to content if it exists
-            if ($response.choices -and $response.choices[0] -and $response.choices[0].message -and $response.choices[0].message.content) {
-                $originalContent = $response.choices[0].message.content
-                $response.choices[0].message.content = Repair-EncodingIssues -Text $originalContent
-                Write-Verbose "Applied encoding repair to message content"
-            }
             
             # Return the complete OpenRouter response as-is
             return $response
