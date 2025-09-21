@@ -54,10 +54,81 @@ function New-OpenRouterHeaders {
         'Authorization' = "Bearer $ApiKey"
         'Content-Type' = $ContentType
         'User-Agent' = 'OpenRouterAIPS/1.0.0 PowerShell'
-        'Accept-Charset' = 'utf-8'
     }
 }
 
+function ConvertTo-TerminalEncoding {
+    <#
+    .SYNOPSIS
+        Converts UTF-8 text to the terminal's current encoding for proper display
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Text
+    )
+
+    if (-not $Text) { return $Text }
+
+    try {
+        # Get the current console output encoding
+        $consoleEncoding = [Console]::OutputEncoding
+
+        # If console is already UTF-8, return as-is
+        if ($consoleEncoding.CodePage -eq 65001) {
+            return $Text
+        }
+
+        # The text is already a .NET string (Unicode internally)
+        # We need to re-encode it properly for the console
+        # First get UTF-8 bytes, then decode with console encoding interpretation
+        $utf8Bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+
+        # Now interpret those UTF-8 bytes as if they were in the console encoding
+        # This handles the case where UTF-8 was incorrectly interpreted as Windows-1252
+        $convertedText = [System.Text.Encoding]::GetEncoding($consoleEncoding.CodePage).GetString($utf8Bytes)
+
+        return $convertedText
+    }
+    catch {
+        Write-Verbose "Encoding conversion failed, returning original text: $($_.Exception.Message)"
+        return $Text
+    }
+}
+
+function ConvertFrom-TerminalEncoding {
+    <#
+    .SYNOPSIS
+        Converts terminal input text to UTF-8 for API transmission
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Text
+    )
+
+    if (-not $Text) { return $Text }
+
+    try {
+        # Get the current console input encoding
+        $consoleEncoding = [Console]::InputEncoding
+
+        # If console is already UTF-8, return as-is
+        if ($consoleEncoding.CodePage -eq 65001) {
+            return $Text
+        }
+
+        # On Windows, the string is already in Unicode internally
+        # We need to ensure it's properly encoded for JSON transmission
+        # Convert to bytes using the console encoding, then back to UTF-8 string
+        $windowsBytes = [System.Text.Encoding]::GetEncoding($consoleEncoding.CodePage).GetBytes($Text)
+        $utf8Text = [System.Text.Encoding]::UTF8.GetString($windowsBytes)
+
+        return $utf8Text
+    }
+    catch {
+        Write-Verbose "Input encoding conversion failed, returning original text: $($_.Exception.Message)"
+        return $Text
+    }
+}
 
 function Invoke-OpenRouterApiRequest {
     <#
@@ -89,15 +160,21 @@ function Invoke-OpenRouterApiRequest {
         }
         
         if ($Body) {
-            $params.Body = ($Body | ConvertTo-Json -Depth 10)
-            Write-Verbose "Request body: $($params.Body)"
+            $jsonBody = ($Body | ConvertTo-Json -Depth 10)
+            # Ensure proper UTF-8 encoding for the request body
+            $params.Body = [System.Text.Encoding]::UTF8.GetBytes($jsonBody)
+            Write-Verbose "Request body: $jsonBody"
         }
         
-        $response = Invoke-RestMethod @params
+        $response = Invoke-WebRequest @params
 
-        $response | ConvertTo-Json -Depth 10 | Set-Content test2.json
+        # Parse JSON response content with proper UTF-8 handling
+        $responseContent = [System.Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray())
+        $jsonResponse = $responseContent | ConvertFrom-Json
 
-        return $response
+        Write-Verbose "Parsed response with explicit UTF-8 encoding"
+
+        return $jsonResponse
     }
     catch {
         $errorMessage = "OpenRouter API error: $($_.Exception.Message)"
