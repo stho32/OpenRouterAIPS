@@ -21,6 +21,14 @@ $script:DefaultModel = 'openai/gpt-3.5-turbo'
 $script:DefaultMaxTokens = 1000
 $script:DefaultTemperature = 0.7
 
+# Set UTF-8 encoding for proper character display
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+} catch {
+    Write-Verbose "Could not set UTF-8 encoding: $($_.Exception.Message)"
+}
+
 # Private helper functions
 
 function Get-OpenRouterApiKey {
@@ -46,14 +54,56 @@ function New-OpenRouterHeaders {
     [CmdletBinding()]
     param(
         [string]$ApiKey = (Get-OpenRouterApiKey),
-        [string]$ContentType = 'application/json'
+        [string]$ContentType = 'application/json; charset=utf-8'
     )
     
     return @{
         'Authorization' = "Bearer $ApiKey"
         'Content-Type' = $ContentType
         'User-Agent' = 'OpenRouterAIPS/1.0.0 PowerShell'
+        'Accept-Charset' = 'utf-8'
     }
+}
+
+function Repair-EncodingIssues {
+    <#
+    .SYNOPSIS
+        Fixes common UTF-8 encoding issues in text
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Text
+    )
+    
+    if (-not $Text) { return $Text }
+    
+    # Fix the most common German umlaut encoding issues
+    $result = $Text
+    
+    # Standard fixes for common encoding problems
+    $result = $result -replace 'Ã¤', 'ä'   # ä
+    $result = $result -replace 'Ã¶', 'ö'   # ö  
+    $result = $result -replace 'Ã¼', 'ü'   # ü
+    $result = $result -replace 'ÃŸ', 'ß'   # ß
+    $result = $result -replace 'Ã„', 'Ä'   # Ä
+    $result = $result -replace 'Ã–', 'Ö'   # Ö
+    $result = $result -replace 'Ãœ', 'Ü'   # Ü
+    
+    # Multi-level encoding issues (e.g., ÃƒÂ¤ -> ä)
+    $result = $result -replace 'Ã\u0083\u00a4', 'ä'
+    $result = $result -replace 'Ã\u0083\u00b6', 'ö' 
+    $result = $result -replace 'Ã\u0083\u00bc', 'ü'
+    $result = $result -replace 'Ã\u0083\u009f', 'ß'
+    
+    # Alternative patterns
+    $result = $result -replace 'mÃ¶', 'mö'    # möchten pattern
+    $result = $result -replace 'schÃ¶', 'schö' # schön pattern
+    $result = $result -replace 'sÃ¼', 'sü'    # süß pattern
+    
+    # Handle any remaining 'Ã' before vowels (common mistake)
+    $result = $result -replace 'Ã([aeiou])', 'Ä$1'  # Fallback for remaining issues
+    
+    return $result
 }
 
 function Invoke-OpenRouterApiRequest {
@@ -196,6 +246,7 @@ function Get-OpenRouterModels {
     }
 }
 
+
 function Invoke-OpenRouterChat {
     <#
     .SYNOPSIS
@@ -208,7 +259,7 @@ function Invoke-OpenRouterChat {
         The message to send to the AI model
     
     .PARAMETER Model
-        The AI model to use (default: openai/gpt-3.5-turbo)
+        The AI model to use (default: openai/gpt-3.5-turbo) - supports auto-completion
     
     .PARAMETER MaxTokens
         Maximum number of tokens to generate (default: 1000)
@@ -232,13 +283,53 @@ function Invoke-OpenRouterChat {
         'What is PowerShell?' | Invoke-OpenRouterChat
         
     .OUTPUTS
-        PSCustomObject with response content, model info, and usage statistics
+        Complete OpenRouter API response object with all fields preserved
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory, ValueFromPipeline)]
         [string]$Message,
         
+        [Parameter()]
+        [ArgumentCompleter({
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+            
+            try {
+                # Get available models from OpenRouter
+                $models = Get-OpenRouterModels -ErrorAction SilentlyContinue
+                
+                if ($models) {
+                    # Filter models based on what user has typed
+                    $models | Where-Object { $_.Id -like "*$wordToComplete*" } | 
+                        ForEach-Object { 
+                            [System.Management.Automation.CompletionResult]::new(
+                                $_.Id, 
+                                $_.Id, 
+                                'ParameterValue', 
+                                "$($_.Provider)/$($_.Name) (Context: $($_.ContextLength))"
+                            )
+                        } | Select-Object -First 20  # Limit to 20 results
+                }
+            }
+            catch {
+                # Fallback to common models if API call fails
+                $commonModels = @(
+                    'openai/gpt-4o',
+                    'openai/gpt-4-turbo', 
+                    'openai/gpt-3.5-turbo',
+                    'anthropic/claude-3-opus',
+                    'anthropic/claude-3-sonnet', 
+                    'anthropic/claude-3-haiku',
+                    'google/gemini-pro',
+                    'meta-llama/llama-2-70b-chat'
+                )
+                
+                $commonModels | Where-Object { $_ -like "*$wordToComplete*" } | 
+                    ForEach-Object {
+                        [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+                    }
+            }
+        })]
         [string]$Model = $script:DefaultModel,
         
         [ValidateRange(1, 32000)]
@@ -284,21 +375,20 @@ function Invoke-OpenRouterChat {
             # Make API request
             $response = Invoke-OpenRouterApiRequest -Endpoint '/chat/completions' -Method 'POST' -Body $requestBody
             
-            # Format response
-            $result = [PSCustomObject]@{
-                Content = $response.choices[0].message.content
-                Model = $response.model
-                FinishReason = $response.choices[0].finish_reason
-                Usage = [PSCustomObject]@{
-                    PromptTokens = $response.usage.prompt_tokens
-                    CompletionTokens = $response.usage.completion_tokens
-                    TotalTokens = $response.usage.total_tokens
-                }
-                Id = $response.id
-                Created = [datetime]::FromFileTimeUtc($response.created * 10000000 + 116444736000000000)
+            Write-Verbose "Received response from OpenRouter API"
+            Write-Verbose "Response ID: $($response.id)"
+            Write-Verbose "Model: $($response.model)"
+            Write-Verbose "Choices count: $($response.choices.Count)"
+            
+            # Apply encoding fix to content if it exists
+            if ($response.choices -and $response.choices[0] -and $response.choices[0].message -and $response.choices[0].message.content) {
+                $originalContent = $response.choices[0].message.content
+                $response.choices[0].message.content = Repair-EncodingIssues -Text $originalContent
+                Write-Verbose "Applied encoding repair to message content"
             }
             
-            return $result
+            # Return the complete OpenRouter response as-is
+            return $response
         }
         catch {
             Write-Error "Failed to get chat completion: $($_.Exception.Message)"
@@ -345,7 +435,7 @@ function Set-OpenRouterConfig {
         Configures default settings for the OpenRouter module
     
     .PARAMETER DefaultModel
-        Set the default AI model to use
+        Set the default AI model to use - supports auto-completion
     
     .PARAMETER DefaultMaxTokens
         Set the default maximum tokens for responses
@@ -361,6 +451,45 @@ function Set-OpenRouterConfig {
     #>
     [CmdletBinding()]
     param(
+        [ArgumentCompleter({
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+            
+            try {
+                # Get available models from OpenRouter
+                $models = Get-OpenRouterModels -ErrorAction SilentlyContinue
+                
+                if ($models) {
+                    # Filter models based on what user has typed
+                    $models | Where-Object { $_.Id -like "*$wordToComplete*" } | 
+                        ForEach-Object { 
+                            [System.Management.Automation.CompletionResult]::new(
+                                $_.Id, 
+                                $_.Id, 
+                                'ParameterValue', 
+                                "$($_.Provider)/$($_.Name) (Context: $($_.ContextLength))"
+                            )
+                        } | Select-Object -First 20  # Limit to 20 results
+                }
+            }
+            catch {
+                # Fallback to common models if API call fails
+                $commonModels = @(
+                    'openai/gpt-4o',
+                    'openai/gpt-4-turbo', 
+                    'openai/gpt-3.5-turbo',
+                    'anthropic/claude-3-opus',
+                    'anthropic/claude-3-sonnet', 
+                    'anthropic/claude-3-haiku',
+                    'google/gemini-pro',
+                    'meta-llama/llama-2-70b-chat'
+                )
+                
+                $commonModels | Where-Object { $_ -like "*$wordToComplete*" } | 
+                    ForEach-Object {
+                        [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+                    }
+            }
+        })]
         [string]$DefaultModel,
         
         [ValidateRange(1, 32000)]

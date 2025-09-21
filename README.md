@@ -10,6 +10,7 @@ OpenRouterAIPS enables PowerShell users to interact with various AI models throu
 
 - **Multiple AI Models**: Access GPT, Claude, Gemini, and other AI models through a single interface
 - **PowerShell Native**: Designed specifically for PowerShell with proper parameter validation and pipeline support
+- **Auto-Completion**: Intelligent tab completion for AI model names with live API data
 - **Secure Authentication**: Uses environment variables for API key storage
 - **Rich Output**: Returns structured PowerShell objects with usage statistics
 - **Error Handling**: Comprehensive error handling with meaningful messages
@@ -135,6 +136,21 @@ $answers = $questions | Invoke-OpenRouterChat -MaxTokens 100
 # Find specific models
 $claudeModels = Get-OpenRouterModels -Filter "claude"
 $cheapModels = Get-OpenRouterModels | Where-Object { $_.PromptPrice -lt 0.001 }
+```
+
+### Auto-Completion
+The Model parameter supports intelligent tab completion:
+```powershell
+# Type and press TAB after the quote to see available models
+Invoke-OpenRouterChat -Message "test" -Model "openai<TAB>
+orchat "hello" -Model "anthropic<TAB>
+Set-OpenRouterConfig -DefaultModel "gpt<TAB>
+
+# Auto-completion features:
+# - Shows up to 20 matching models
+# - Displays provider, name, and context length
+# - Falls back to common models if API unavailable
+# - Works with aliases and full command names
 ```
 
 ### Configuration
