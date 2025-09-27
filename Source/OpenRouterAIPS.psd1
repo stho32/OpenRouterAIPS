@@ -32,7 +32,13 @@
         'Get-OpenRouterModels',
         'Get-OpenRouterConfig',
         'Set-OpenRouterConfig',
-        'Test-OpenRouterConnection'
+        'Test-OpenRouterConnection',
+        'Start-OpenRouterChat',
+        'Get-OpenRouterChatHistory',
+        'Save-OpenRouterChatHistory',
+        'Clear-OpenRouterChatHistory',
+        'Set-OpenRouterChatConfig',
+        'Get-OpenRouterChatConfig'
     )
 
     # Cmdlets to export from this module
@@ -44,7 +50,12 @@
     # Aliases to export from this module
     AliasesToExport = @(
         'orchat',
-        'ormodels'
+        'ormodels',
+        'orchat-session',
+        'orchat-history',
+        'orchat-save',
+        'orchat-clear',
+        'orchat-config'
     )
 
     # Private data to pass to the module specified in RootModule/ModuleToProcess
