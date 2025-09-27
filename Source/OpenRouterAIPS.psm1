@@ -115,6 +115,55 @@ function Invoke-OpenRouterApiRequest {
     }
 }
 
+function Invoke-OpenRouterChatWithHistory {
+    <#
+    .SYNOPSIS
+        Internal function for chat completions with full conversation history
+    .DESCRIPTION
+        This function is used internally by the chat module to maintain conversation context
+        by sending the complete message history to the API.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [array]$Messages,
+        
+        [Parameter(Mandatory)]
+        [string]$Model,
+        
+        [ValidateRange(1, 32000)]
+        [int]$MaxTokens = $script:DefaultMaxTokens,
+        
+        [ValidateRange(0.0, 2.0)]
+        [decimal]$Temperature = $script:DefaultTemperature
+    )
+    
+    try {
+        Write-Verbose "Sending conversation with $($Messages.Count) messages to model: $Model"
+        
+        # Build request body with full conversation history
+        $requestBody = @{
+            model = $Model
+            messages = $Messages
+            max_tokens = $MaxTokens
+            temperature = [double]$Temperature
+        }
+        
+        # Make API request
+        $response = Invoke-OpenRouterApiRequest -Endpoint '/chat/completions' -Method 'POST' -Body $requestBody
+        
+        Write-Verbose "Received response from OpenRouter API"
+        Write-Verbose "Response ID: $($response.id)"
+        Write-Verbose "Model: $($response.model)"
+        
+        return $response
+    }
+    catch {
+        Write-Error "Failed to get chat completion with history: $($_.Exception.Message)"
+        throw
+    }
+}
+
 # Public functions
 
 function Test-OpenRouterConnection {
@@ -330,10 +379,127 @@ function Invoke-OpenRouterChat {
             }
             
             if ($Stream) {
-                Write-Warning 'Streaming is not implemented in this version'
+                # Enable streaming in request body
+                $requestBody.stream = $true
+                
+                try {
+                    # Get API key and build headers for streaming
+                    $apiKey = Get-OpenRouterApiKey
+                    $headers = @{
+                        'Authorization' = "Bearer $apiKey"
+                        'Content-Type' = 'application/json; charset=utf-8'
+                        'User-Agent' = 'OpenRouterAIPS/1.0.0 PowerShell'
+                    }
+                    
+                    $uri = "$script:OpenRouterBaseUri/chat/completions"
+                    $jsonBody = ($requestBody | ConvertTo-Json -Depth 10)
+                    
+                    Write-Verbose "Making streaming request to: $uri"
+                    
+                    # Create HTTP request for streaming
+                    $httpRequest = [System.Net.HttpWebRequest]::Create($uri)
+                    $httpRequest.Method = 'POST'
+                    $httpRequest.ContentType = 'application/json; charset=utf-8'
+                    $httpRequest.UserAgent = 'OpenRouterAIPS/1.0.0 PowerShell'
+                    $httpRequest.Headers.Add('Authorization', "Bearer $apiKey")
+                    
+                    # Write request body
+                    $requestStream = $httpRequest.GetRequestStream()
+                    $bytes = [System.Text.Encoding]::UTF8.GetBytes($jsonBody)
+                    $requestStream.Write($bytes, 0, $bytes.Length)
+                    $requestStream.Close()
+                    
+                    # Get response stream
+                    $response = $httpRequest.GetResponse()
+                    $responseStream = $response.GetResponseStream()
+                    $reader = New-Object System.IO.StreamReader($responseStream)
+                    
+                    $completeContent = ''
+                    $streamingResponse = @{
+                        id = $null
+                        object = 'chat.completion'
+                        created = [int64]((Get-Date).ToUniversalTime() - (Get-Date '1970-01-01')).TotalSeconds
+                        model = $Model
+                        choices = @(
+                            @{
+                                index = 0
+                                message = @{
+                                    role = 'assistant'
+                                    content = ''
+                                }
+                                finish_reason = 'stop'
+                            }
+                        )
+                        usage = @{
+                            prompt_tokens = 0
+                            completion_tokens = 0
+                            total_tokens = 0
+                        }
+                    }
+                    
+                    # Read streaming data
+                    while (-not $reader.EndOfStream) {
+                        $line = $reader.ReadLine()
+                        
+                        if ($line.StartsWith('data: ') -and $line -ne 'data: [DONE]') {
+                            try {
+                                $jsonData = $line.Substring(6)
+                                $chunk = $jsonData | ConvertFrom-Json
+                                
+                                # Update response ID if available
+                                if ($chunk.id -and -not $streamingResponse.id) {
+                                    $streamingResponse.id = $chunk.id
+                                }
+                                
+                                # Process content delta
+                                if ($chunk.choices -and $chunk.choices[0].delta.content) {
+                                    $content = $chunk.choices[0].delta.content
+                                    Write-Host $content -NoNewline
+                                    $completeContent += $content
+                                }
+                                
+                                # Update usage information if available
+                                if ($chunk.usage) {
+                                    $streamingResponse.usage = $chunk.usage
+                                }
+                                
+                                # Update finish reason
+                                if ($chunk.choices -and $chunk.choices[0].finish_reason) {
+                                    $streamingResponse.choices[0].finish_reason = $chunk.choices[0].finish_reason
+                                }
+                            }
+                            catch {
+                                # Skip malformed JSON chunks
+                                Write-Verbose "Skipping malformed chunk: $line"
+                                continue
+                            }
+                        }
+                    }
+                    
+                    Write-Host "`n"
+                    
+                    # Clean up
+                    $reader.Close()
+                    $responseStream.Close()
+                    $response.Close()
+                    
+                    # Set complete content in response
+                    $streamingResponse.choices[0].message.content = $completeContent
+                    
+                    Write-Verbose "Streaming response complete"
+                    Write-Verbose "Response ID: $($streamingResponse.id)"
+                    Write-Verbose "Complete content length: $($completeContent.Length)"
+                    
+                    return $streamingResponse
+                }
+                catch {
+                    Write-Warning "Streaming failed, falling back to regular request: $($_.Exception.Message)"
+                    # Remove stream parameter and fall back to regular request
+                    $requestBody.Remove('stream')
+                }
             }
             
-            # Make API request
+            # Make regular API request (or fallback from streaming)
             $response = Invoke-OpenRouterApiRequest -Endpoint '/chat/completions' -Method 'POST' -Body $requestBody
             
             Write-Verbose "Received response from OpenRouter API"
@@ -475,12 +641,49 @@ New-Alias -Name 'orchat' -Value 'Invoke-OpenRouterChat' -Description 'Short alia
 New-Alias -Name 'ormodels' -Value 'Get-OpenRouterModels' -Description 'Short alias for Get-OpenRouterModels'
 
 # Export functions and aliases
-Export-ModuleMember -Function @(
+$exportedFunctions = @(
     'Invoke-OpenRouterChat',
     'Get-OpenRouterModels', 
     'Get-OpenRouterConfig',
     'Set-OpenRouterConfig',
     'Test-OpenRouterConnection'
-) -Alias @('orchat', 'ormodels')
+)
+
+$exportedAliases = @('orchat', 'ormodels')
+
+Export-ModuleMember -Function $exportedFunctions -Alias $exportedAliases
+
+# Import chat functionality after main module functions are exported
+$chatModulePath = Join-Path -Path $PSScriptRoot -ChildPath 'OpenRouterAIPS.Chat.psm1'
+if (Test-Path -Path $chatModulePath) {
+    try {
+        Import-Module -Name $chatModulePath -Force -Global
+        Write-Verbose 'OpenRouterAIPS.Chat module imported successfully'
+        
+        # Add chat functions to exports
+        $chatFunctions = @(
+            'Start-OpenRouterChat',
+            'Get-OpenRouterChatHistory',
+            'Save-OpenRouterChatHistory',
+            'Clear-OpenRouterChatHistory',
+            'Set-OpenRouterChatConfig',
+            'Get-OpenRouterChatConfig'
+        )
+        
+        $chatAliases = @(
+            'orchat-session',
+            'orchat-history', 
+            'orchat-save',
+            'orchat-clear',
+            'orchat-config'
+        )
+        
+        # Export the chat functions and aliases
+        Export-ModuleMember -Function $chatFunctions -Alias $chatAliases
+    }
+    catch {
+        Write-Warning "Failed to import chat module: $($_.Exception.Message)"
+    }
+}
 
 Write-Verbose 'OpenRouterAIPS module loaded successfully'
