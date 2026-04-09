@@ -1,5 +1,7 @@
 ﻿#Requires -Version 5.1
 
+$ErrorActionPreference = 'Stop'
+
 <#
 .SYNOPSIS
     OpenRouterAIPS - PowerShell module for interacting with OpenRouter AI API

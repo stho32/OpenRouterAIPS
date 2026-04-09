@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run PSScriptAnalyzer lint
+        shell: pwsh
+        run: |
+          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+          $results = Invoke-ScriptAnalyzer -Path ./Source -Recurse -ReportSummary
+          $results | Format-Table -AutoSize
+          if ($results | Where-Object { $_.Severity -eq 'Error' }) {
+            Write-Error "PSScriptAnalyzer found errors."
+            exit 1
+          }
+
+      - name: Run Pester tests
+        shell: pwsh
+        run: |
+          if (Test-Path ./Tests) {
+            Install-Module -Name Pester -Force -Scope CurrentUser -MinimumVersion 5.0
+            $config = New-PesterConfiguration
+            $config.Run.Path = './Tests'
+            $config.Output.Verbosity = 'Detailed'
+            $config.Run.Exit = $true
+            Invoke-Pester -Configuration $config
+          } else {
+            Write-Host "No Tests directory found - skipping Pester tests."
+          }
